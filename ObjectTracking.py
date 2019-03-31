@@ -18,7 +18,7 @@ class ObjectTracking(object):
     keypoint_accuracy = 0.50
     bounding_rect_accuracy = 0.90
     object_detection_accuracy = 0.80
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture('rtsp://admin:admin@192.168.1.30:10554/tcp/av0_0')
     prev_frame = None
     prev_gray = None
     prev_points = []
@@ -210,8 +210,8 @@ class ObjectTracking(object):
                                     cv2.rectangle(self.frame, self.bounding_rect_top_left,
                                                   self.bounding_rect_bottom_right, (255, 0, 0), 2)
 
-                            coords_x_30 = [0] * (math.ceil(640 / 30) + 1)
-                            coords_y_30 = [0] * (math.ceil(480 / 30) + 1)
+                            coords_x_30 = [0] * (math.ceil(1270 / 30) + 1)
+                            coords_y_30 = [0] * (math.ceil(680/ 30) + 1)
                             for x, y in self.coords:
                                 i, j = int(x / 30), int(y / 30)
                                 coords_x_30[i] += 1
