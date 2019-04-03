@@ -1,3 +1,7 @@
+
+
+
+
 import numpy as np
 import cv2
 import math
@@ -17,12 +21,14 @@ lucas_kanade_params = dict(winSize=(15, 15), maxLevel=2,
 
 class Ui_Dialog(object):
     draw_keypoints_enabled = True
-    draw_bounding_rect_enabled = False
+    draw_bounding_rect_enabled = True
     interval = 20
     keypoint_accuracy = 0.50
     bounding_rect_accuracy = 0.90
     object_detection_accuracy = 0.80
     cap = cv2.VideoCapture(0)
+    width = cap.get(3)
+    height = cap.get(4)
     prev_frame = None
     prev_gray = None
     prev_points = []
@@ -50,7 +56,7 @@ class Ui_Dialog(object):
     center_x = 0
     center_y = 0
     key, key2 = None, None
-
+    center = (0, 0)
 
     ################################ initialization function #########################################
     def __init__(self):
@@ -230,11 +236,28 @@ class Ui_Dialog(object):
                             self.center_x = coords_x_30.index(max(coords_x_30)) * 30 + 15
                             self.center_y = coords_y_30.index(max(coords_y_30)) * 30 + 15
 
-                            cv2.line(self.frame, (self.center_x - 10, self.center_y),
-                                     (self.center_x + 10, self.center_y), (255, 0, 0), 2)
-                            cv2.line(self.frame, (self.center_x, self.center_y - 10),
-                                     (self.center_x, self.center_y + 10), (255, 0, 0), 2)
-                            cv2.circle(self.frame, (self.center_x, self.center_y), 15, (255, 0, 0), 2)
+                            ### Center by  keypoints's density
+
+                            center_x1 = (self.bounding_rect_top_left[0]+self.bounding_rect_bottom_right[0])/2
+                            center_y1 = (self.bounding_rect_top_left[1]+self.bounding_rect_bottom_right[1])/2
+
+                            ### Center of bounding box
+
+                            self.center = (center_x1,center_y1)
+
+                            ### Distance and angle of bounding box's center
+
+
+                            angle_of_center = self.angle(self.center,self.width,self.height)
+                            distance_of_center = self.distance(self.center,(self.width/2, self.height/2))
+
+
+                            cv2.line(self.frame, (self.center_x - 2, self.center_y),
+                                     (self.center_x + 2, self.center_y), (255, 0, 0), 2)
+                            cv2.line(self.frame, (self.center_x, self.center_y - 2),
+                                     (self.center_x, self.center_y + 2), (255, 0, 0), 2)
+                            cv2.circle(self.frame, (self.center_x, self.center_y), 5, (255, 0, 0), 2)
+                            cv2.circle(self.frame, (int(center_x1), int(center_y1)), 5, (255, 0, 0), 2)
                             cv2.putText(self.frame, str(len(self.coords)), (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                         color=(200, 50, 75), thickness=3)
                         else:
@@ -243,6 +266,11 @@ class Ui_Dialog(object):
 
                         self.prev_gray = self.frame_gray.copy()
                         self.prev_points = self.new_points.reshape(-1, 1, 2)
+
+
+                        ### UART
+                        ser.write(str.encode(format(distance_of_center, '.3f')) + b' ')
+                        ser.write(str.encode(format(angle_of_center, '.3f')) + b'\n')
 
                     cond_1 = self.new_points is None
                     cond_2 = self.prev_points[status == 1].shape[0] < self.initial_keypoints * self.keypoint_accuracy
@@ -267,9 +295,8 @@ class Ui_Dialog(object):
                 else:
                     cv2.imshow('Object Tracking', self.frame)
                     #show_image(self.frame)
-                ser.write(str.encode(format(self.center_x, '.1f')) + b' ')
-                ser.write(str.encode(format(self.center_y, '.1f')) + b'\n')
-
+                
+                
                 self.key = cv2.waitKey(25)
                 if self.Pause.isChecked():
                     self.Pause.toggle()
@@ -306,7 +333,20 @@ class Ui_Dialog(object):
         cv2.destroyAllWindows()
         self.cap.release()
 
+    def distance(self, point1, point2):
+        return math.sqrt((point1[0]-point2[0])**2+(point1[1]-point2[1])**2)
 
+    def angle(self, point, width, height):
+        if point[0]<320 and point[1]<240: 
+            return math.degrees(math.atan((point[1]-height/2)/(point[0]-width/2)))-180
+        elif point[0]<320 and point[1]>240:
+            return math.degrees(math.atan((point[1]-height/2)/(point[0]-width/2)))+180
+        elif point[0]==320 and point[1]<240:
+            return -90
+        elif point[0]==320 and point[1]>240:
+            return 90   
+        else:
+            return math.degrees(math.atan((point[1]-height/2)/(point[0]-width/2)))       
 
 
     ########################################## UI #####################################################
