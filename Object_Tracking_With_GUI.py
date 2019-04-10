@@ -96,7 +96,8 @@ class MainWindow(QWidget):
         self.ui.Exit.setCheckable(True)
         self.ui.Start.clicked.connect(self.start)
         self.ui.Start.setCheckable(True)
-        self.ui.Reset.clicked.connect(self.clearCenter) 
+        self.ui.Reset.clicked.connect(self.clearCenter)
+        self.ui.Exit.clicked.connect(lambda: self.close()) 
          # create a timer
         self.timer = QTimer()
         # set timer timeout callback function
@@ -348,7 +349,7 @@ class MainWindow(QWidget):
                     self.error = None
                 if self.ui.Exit.isChecked():  # 13 is the Enter Key
                     break
-        sys.exit(app.exec_())
+        self.end()
 
     def end(self):
         cv2.destroyAllWindows()
@@ -386,6 +387,8 @@ class MainWindow(QWidget):
         qImg = QImage(image.data, width, height, step, QImage.Format_RGB888)
         # show image in img_label
         self.ui.label.setPixmap(QPixmap.fromImage(qImg))
+    
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
