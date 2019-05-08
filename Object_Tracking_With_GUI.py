@@ -1,11 +1,9 @@
-
-
-
 import sys
 import numpy as np
 import cv2
 import math
 import serial
+import serial.tools.list_ports
 from time import sleep
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
@@ -70,22 +68,22 @@ class MainWindow(QWidget):
         self.new_points = np.asarray(self.new_points, dtype=np.float32).reshape(-1, 1, 2)
         cv2.namedWindow('Object Tracking')
         cv2.setMouseCallback('Object Tracking', self.select_roi)
-        COMPORT = 3  # Enter Your COM Port Number Here.
+        #COMPORT = 3  # Enter Your COM Port Number Here.
         global ser
         ser = serial.Serial()
-        ser.baudrate = 9600
-        ser.port = "COM{}".format(COMPORT)  # COM Port Name Start from 0
+        
+        #ser.port = "COM{}".format(COMPORT)  # COM Port Name Start from 0
 
         # ser.port = '/dev/ttyUSB0' #If Using Linux
 
         # Specify the TimeOut in seconds, so that SerialPort
         # Doesn't hangs
+        ser.bytesize = serial.EIGHTBITS
+        ser.parity = serial.PARITY_NONE
         ser.timeout = 10
-        ser.open()  # Opens SerialPort
-
-        # print port open or closed
-        if ser.isOpen():
-            print('Open: ' + ser.portstr)
+        #ser.open()
+        
+        
 
         # call QWidget constructor    
         super().__init__()
@@ -97,12 +95,15 @@ class MainWindow(QWidget):
         self.ui.Start.clicked.connect(self.start)
         self.ui.Start.setCheckable(True)
         self.ui.Reset.clicked.connect(self.clearCenter)
-        self.ui.Exit.clicked.connect(lambda: self.close()) 
+        self.ui.Exit.clicked.connect(lambda: self.close())
+        self.ui.Exit.clicked.connect(lambda: self.end()) 
+        self.ui.UartBtn.clicked.connect(self.checkPort) 
+        self.ui.Refresh.clicked.connect(self.refreshPort)
          # create a timer
         self.timer = QTimer()
         # set timer timeout callback function
         self.timer.timeout.connect(self.viewCam)
-        
+                  
           
 
     #################################### select_roi function #########################################
@@ -221,7 +222,7 @@ class MainWindow(QWidget):
         self.bounding_rect_bottom_right = (int(right), int(bottom))
 
     def start(self):
-
+        
         self.ui.Start.toggle()
         while (True):
             ret, self.frame = self.cap.read()
@@ -249,8 +250,8 @@ class MainWindow(QWidget):
                                     cv2.rectangle(self.frame, self.bounding_rect_top_left,
                                                   self.bounding_rect_bottom_right, (255, 0, 0), 2)
 
-                            coords_x_30 = [0] * (math.ceil(640 / 30) + 1)
-                            coords_y_30 = [0] * (math.ceil(480 / 30) + 1)
+                            coords_x_30 = [0] * (math.ceil(self.width / 30) + 1)
+                            coords_y_30 = [0] * (math.ceil(self.height / 30) + 1)
                             for x, y in self.coords:
                                 i, j = int(x / 30), int(y / 30)
                                 coords_x_30[i] += 1
@@ -291,8 +292,10 @@ class MainWindow(QWidget):
                         self.ui.display_distance.setText(str(self.distance_of_center))
                         self.ui.display_angle.setText(str(self.angle_of_center))
                         ### UART
-                        ser.write(str.encode(format(self.distance_of_center, '.3f')) + b' ')
-                        ser.write(str.encode(format(self.angle_of_center, '.3f')) + b'\n')
+                        if ser.isOpen():
+                            ser.write(b'CAM ')
+                            ser.write(str.encode(format(self.distance_of_center, '.3f')) + b' ')
+                            ser.write(str.encode(format(self.angle_of_center, '.3f')) + b'\n')
 
                     cond_1 = self.new_points is None
                     cond_2 = self.prev_points[status == 1].shape[0] < self.initial_keypoints * self.keypoint_accuracy
@@ -324,10 +327,10 @@ class MainWindow(QWidget):
                     self.ui.Pause.toggle()
                     self.key2 = cv2.waitKey(25)
                     while not (self.ui.Start.isChecked()):
-                        if self.key2 == ord('r'):
+                        if self.ui.Reset.isChecked():
                             self.frame = error_free_frame
                             self.key = self.key2
-                        elif self.key2 == 13:
+                        elif self.ui.Exit.isChecked():
                             self.key = 13
                             break
 
@@ -352,8 +355,8 @@ class MainWindow(QWidget):
         self.end()
 
     def end(self):
-        cv2.destroyAllWindows()
         self.cap.release()
+        cv2.destroyAllWindows()
 
     def distance(self, point1, point2):
         return math.sqrt((point1[0]-point2[0])**2+(point1[1]-point2[1])**2)
@@ -388,7 +391,31 @@ class MainWindow(QWidget):
         # show image in img_label
         self.ui.label.setPixmap(QPixmap.fromImage(qImg))
     
+    def checkPort(self):
+        ser.port= self.ui.portname.currentText()
+        ser.baudrate = self.ui.baudrate.currentText()
+        if self.ui.UartBtn.text() == 'Connect':
+            ser.open()  # Opens SerialPort
+            self.ui.UartBtn.setText('Disconnect')
+            self.ui.UartBtn.toggle()
+        else:
+            ser.close()  
+            self.ui.UartBtn.setText('Connect')
+            self.ui.UartBtn.toggle()
 
+
+        # print port open or closed
+        if ser.isOpen():
+            print('Open: ' + ser.portstr)
+            #print(type(ser.baudrate))
+        else:
+            print('Close: ' + ser.portstr)    
+
+    def refreshPort(self):
+        self.ui.portname.clear()
+        ports = list(serial.tools.list_ports.comports())  
+        for p in ports:
+            self.ui.portname.addItem(p[0])                
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
