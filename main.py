@@ -4,12 +4,13 @@ import cv2
 import math
 import serial
 import serial.tools.list_ports
+import datetime
 from time import sleep
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QIcon, QPixmap, QImage
 from PyQt5.QtCore import QTimer
-from GUI import *
+from ui_main import *
 # Set parameters for ShiTomasi corner detection
 feature_params = dict(maxCorners=500, qualityLevel=0.3, minDistance=7, blockSize=7)
 # Set parameters for lucas kanade optical flow
@@ -93,7 +94,6 @@ class MainWindow(QWidget):
         self.ui.Exit.setCheckable(True)
         self.ui.Start.clicked.connect(self.start)
         self.ui.Start.setCheckable(True)
-        self.ui.Reset.clicked.connect(self.clearCenter)
         self.ui.Exit.clicked.connect(lambda: self.close())
         self.ui.Exit.clicked.connect(lambda: self.end()) 
         self.ui.UartBtn.clicked.connect(self.checkPort) 
@@ -103,11 +103,15 @@ class MainWindow(QWidget):
         self.ui.keypoints_accuracy_slider.valueChanged.connect(lambda: self.slider())
         self.ui.rectangle_accuracy_slider.valueChanged.connect(lambda: self.slider())
         self.ui.object_accuracy_slider.valueChanged.connect(lambda: self.slider())
-         # create a timer
-        self.timer = QTimer()
-        # set timer timeout callback function
-        self.timer.timeout.connect(self.viewCam)
+         # create timers for cam and uart
+        self.timer_cam = QTimer()
+        self.timer_uart = QTimer()
 
+        self.timer_uart.setInterval(500)
+        self.timer_uart.start()
+        # set timer timeout callback function
+        self.timer_cam.timeout.connect(self.viewCam)
+        self.timer_uart.timeout.connect(self.send_data) 
         # auto find all serial ports avaiable in computer (doesn't need to click refresh button)
         self.refreshPort()
                   
@@ -265,7 +269,6 @@ class MainWindow(QWidget):
                                 coords_y_30[j] += 1
 
                             ### Center by  keypoints's density
-
                             self.center_x = coords_x_30.index(max(coords_x_30)) * 30 + 15		
                             self.center_y = coords_y_30.index(max(coords_y_30)) * 30 + 15
 
@@ -282,11 +285,11 @@ class MainWindow(QWidget):
                             self.distance_of_center = round(self.distance(self.center,(self.width/2, self.height/2)),4)
 
 
-                            cv2.line(self.frame, (self.center_x - 2, self.center_y),
-                                     (self.center_x + 2, self.center_y), (255, 0, 0), 2)
-                            cv2.line(self.frame, (self.center_x, self.center_y - 2),
-                                     (self.center_x, self.center_y + 2), (255, 0, 0), 2)
-                            cv2.circle(self.frame, (self.center_x, self.center_y), 5, (255, 0, 0), 2)
+                            #cv2.line(self.frame, (self.center_x - 2, self.center_y),
+                                     #(self.center_x + 2, self.center_y), (255, 0, 0), 2)
+                            #cv2.line(self.frame, (self.center_x, self.center_y - 2),
+                                     #(self.center_x, self.center_y + 2), (255, 0, 0), 2)
+                            #cv2.circle(self.frame, (self.center_x, self.center_y), 5, (255, 0, 0), 2)
                             cv2.circle(self.frame, (int(center_x1), int(center_y1)), 5, (255, 0, 0), 2)
                             #cv2.putText(self.frame, str(len(self.coords)), (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                         #color=(200, 50, 75), thickness=3)
@@ -296,14 +299,7 @@ class MainWindow(QWidget):
 
                         self.prev_gray = self.frame_gray.copy()
                         self.prev_points = self.new_points.reshape(-1, 1, 2)
-                        self.ui.display_distance.setText(str(self.distance_of_center))
-                        self.ui.display_angle.setText(str(self.angle_of_center))
-                        ### UART
-                        if ser.isOpen():
-                            ser.write(b'CAM ')
-                            ser.write(str.encode(format(self.distance_of_center, '.3f')) + b' ')
-                            ser.write(str.encode(format(self.angle_of_center, '.3f')) + b'\n')
-
+                        
                     cond_1 = self.new_points is None
                     cond_2 = self.prev_points[status == 1].shape[0] < self.initial_keypoints * self.keypoint_accuracy
                     cond_3 = self.scan_count % self.interval == 0
@@ -366,7 +362,7 @@ class MainWindow(QWidget):
         cv2.destroyAllWindows()
 
     def distance(self, point1, point2):
-        return math.sqrt((point1[0]-point2[0])**2+(point1[1]-point2[1])**2)
+        return math.sqrt((point1[0]-point2[0])**2 + (point1[1]-point2[1])**2)
 
     def angle(self, point,width,height):
         if point[0]<width/2 and point[1]<height/2: 
@@ -382,11 +378,6 @@ class MainWindow(QWidget):
 
 
     ########################################## UI ###################################################          
-    def clearCenter(self):
-        
-        self.ui.display_distance.setText(" ")
-        self.ui.display_angle.setText(" ")
-
     def viewCam(self,frame):
         # convert image to RGB format
         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -401,13 +392,13 @@ class MainWindow(QWidget):
     def checkPort(self):
         ser.port= self.ui.portname.currentText()
         ser.baudrate = self.ui.baudrate.currentText()
-        if self.ui.UartBtn.text() == 'Connect':
+        if self.ui.UartBtn.text() == 'Open':
             ser.open()  # Opens SerialPort
-            self.ui.UartBtn.setText('Disconnect')
+            self.ui.UartBtn.setText('Close')
             self.ui.UartBtn.toggle()
         else:
             ser.close()  
-            self.ui.UartBtn.setText('Connect')
+            self.ui.UartBtn.setText('Open')
             self.ui.UartBtn.toggle()
 
 
@@ -437,7 +428,25 @@ class MainWindow(QWidget):
     def slider(self):
     	self.keypoint_accuracy = self.ui.keypoints_accuracy_slider.value()/100
     	self.bounding_rect_accuracy = self.ui.rectangle_accuracy_slider.value()/100
-    	self.object_detection_accuracy = self.ui.object_accuracy_slider.value()/100			                  
+    	self.object_detection_accuracy = self.ui.object_accuracy_slider.value()/100
+
+    def check_sum(self, my_string):
+        result = 0
+        length = len(my_string)
+        for i in range(length):
+            result ^= ord(my_string[i])
+        my_hex = '{0:X}'.format(result)
+        if result < 16:
+            my_hex = '0' + my_hex
+        return my_hex
+
+    def send_data(self):
+    	if ser.isOpen():
+            temp = 'CAM,' + str(self.distance_of_center) + ',' + str(self.angle_of_center)
+            temp = temp + ',' + self.check_sum(temp) + '\r\n'
+            ser.write(str.encode(format(temp)))
+            text = datetime.datetime.now().strftime("%H:%M:%S") + ' ' + temp
+            self.ui.sent_box.append(text)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
