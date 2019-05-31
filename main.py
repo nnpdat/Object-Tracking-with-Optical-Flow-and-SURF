@@ -4,29 +4,24 @@ import cv2
 import math
 import serial
 import serial.tools.list_ports
-import datetime
+import time
 from time import sleep
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QIcon, QPixmap, QImage
 from PyQt5.QtCore import QTimer
 from ui_main import *
-# Set parameters for ShiTomasi corner detection
-feature_params = dict(maxCorners=500, qualityLevel=0.3, minDistance=7, blockSize=7)
-# Set parameters for lucas kanade optical flow
+
 lucas_kanade_params = dict(winSize=(15, 15), maxLevel=2,
                            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-
-
+Stream = 'rtsp://admin:adminEXCZCN@192.168.137.49:554/Streaming/Channels/101/'
 
 class MainWindow(QWidget):
-    draw_keypoints_enabled = False
-    draw_bounding_rect_enabled = False
     interval = 20
     keypoint_accuracy = 0.50
     bounding_rect_accuracy = 0.90
     object_detection_accuracy = 0.80
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(Stream)
     width = cap.get(3)
     height = cap.get(4)
     prev_frame = None
@@ -60,30 +55,16 @@ class MainWindow(QWidget):
     angle_of_center = 0
     distance_of_center = 0
 
+
     ################################ initialization function #########################################
     def __init__(self):
         # Take first frame and find points in it
-        _, self.prev_frame = self.cap.read()
-        self.prev_gray = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
-        self.prev_points = np.asarray(self.prev_points, dtype=np.float32).reshape(-1, 1, 2)
-        self.new_points = np.asarray(self.new_points, dtype=np.float32).reshape(-1, 1, 2)
-        cv2.namedWindow('Object Tracking')
-        cv2.setMouseCallback('Object Tracking', self.select_roi)
         #COMPORT = 3  # Enter Your COM Port Number Here.
         global ser
         ser = serial.Serial()
-        
-        #ser.port = "COM{}".format(COMPORT)  # COM Port Name Start from 0
-
-        # ser.port = '/dev/ttyUSB0' #If Using Linux
-
-        # Specify the TimeOut in seconds, so that SerialPort
-        # Doesn't hangs
+        # configure serial port
         ser.bytesize = serial.EIGHTBITS
         ser.parity = serial.PARITY_NONE
-        ser.timeout = 10
-        #ser.open()
-            
 
         # call QWidget constructor    
         super().__init__()
@@ -96,24 +77,21 @@ class MainWindow(QWidget):
         self.ui.Start.setCheckable(True)
         self.ui.Exit.clicked.connect(lambda: self.close())
         self.ui.Exit.clicked.connect(lambda: self.end()) 
-        self.ui.UartBtn.clicked.connect(self.checkPort) 
-        self.ui.Refresh.clicked.connect(self.refreshPort)
-        self.ui.show_keypoints.stateChanged.connect(lambda: self.checkBox())
-        self.ui.show_bounding_rectangle.stateChanged.connect(lambda: self.checkBox())
+        self.ui.open_btn.clicked.connect(self.OpenPort) 
+        self.ui.close_btn.clicked.connect(self.ClosePort)
+        self.ui.refresh_btn.clicked.connect(self.RefreshPort)
         self.ui.keypoints_accuracy_slider.valueChanged.connect(lambda: self.slider())
         self.ui.rectangle_accuracy_slider.valueChanged.connect(lambda: self.slider())
         self.ui.object_accuracy_slider.valueChanged.connect(lambda: self.slider())
          # create timers for cam and uart
-        self.timer_cam = QTimer()
         self.timer_uart = QTimer()
 
         self.timer_uart.setInterval(500)
-        self.timer_uart.start()
+        
         # set timer timeout callback function
-        self.timer_cam.timeout.connect(self.viewCam)
         self.timer_uart.timeout.connect(self.send_data) 
         # auto find all serial ports avaiable in computer (doesn't need to click refresh button)
-        self.refreshPort()
+        self.RefreshPort()
                   
           
 
@@ -134,7 +112,6 @@ class MainWindow(QWidget):
                     self.selected_image = self.frame[self.top_left[1]:self.bottom_right[1],
                                           self.top_left[0]:self.bottom_right[0], :]
                     self.selected_image_gray = cv2.cvtColor(self.selected_image, cv2.COLOR_BGR2GRAY)
-                    cv2.imshow("selected_image", self.selected_image)
                     self.find_selected_image_keypoints = True
                     self.find_keypoints()
                     if self.error is None:
@@ -148,7 +125,6 @@ class MainWindow(QWidget):
 
         if self.find_selected_image_keypoints:
             self.kp2, self.des2 = surf.detectAndCompute(self.selected_image_gray, None)
-            # print(len(kp1), len(self.kp2))
             if len(self.kp2) < 3:
                 self.error = "No keypoints found, Try again."
                 return
@@ -160,21 +136,19 @@ class MainWindow(QWidget):
         search_params = dict(checks=50)
         flann = cv2.FlannBasedMatcher(index_params, search_params)
         matches = flann.knnMatch(des1, self.des2, k=2)
-
+        
         good = []
         for m, n in matches:
             if m.distance < 0.7 * n.distance:
                 good.append(m)
 
         list_kp1 = []
-        # list_kp2 = []
+        
         for mat in good:
             img1_idx = mat.queryIdx
-            # img2_idx = mat.trainIdx
             (x1, y1) = kp1[img1_idx].pt
-            # (x2,y2) = kp2[img2_idx].pt
             list_kp1.append((x1, y1))
-            # list_kp2.append((x2, y2))
+            
 
         self.prev_points = []
         self.prev_points = np.asarray(self.prev_points, dtype=np.float32).reshape(-1, 2)
@@ -233,10 +207,20 @@ class MainWindow(QWidget):
         self.bounding_rect_bottom_right = (int(right), int(bottom))
 
     def start(self):
-        
+        self.timer_uart.start()
         self.ui.Start.toggle()
+
+        _, self.prev_frame = self.cap.read()
+        self.prev_frame = self.rescale_frame(self.prev_frame, 50)
+        self.prev_gray = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
+        self.prev_points = np.asarray(self.prev_points, dtype=np.float32).reshape(-1, 1, 2)
+        self.new_points = np.asarray(self.new_points, dtype=np.float32).reshape(-1, 1, 2)
+        cv2.namedWindow('Object Tracking')
+        cv2.setMouseCallback('Object Tracking', self.select_roi)
+
         while (True):
             ret, self.frame = self.cap.read()
+            self.frame = self.rescale_frame(self.frame, 50)
             self.frame_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
             if ret:
                 if self.tracker_enabled:  # and self.prev_points is not None:
@@ -250,49 +234,23 @@ class MainWindow(QWidget):
                     if self.new_points is not None:
                         temp = self.new_points[status == 1]
                         self.coords = temp.reshape(-1, 2)
-                        for x, y in self.coords:
-                            if self.draw_keypoints_enabled:
-                                cv2.circle(self.frame, (int(x), int(y)), 3, (0, 255, 0), -1)
-
+                        
                         if len(self.coords) > self.initial_keypoints * (1 - self.object_detection_accuracy):
-                            if self.draw_bounding_rect_enabled:
-                                if len(self.coords) != 0:
-                                    self.find_bounding_rect_coords()
-                                    cv2.rectangle(self.frame, self.bounding_rect_top_left,
+                            if len(self.coords) != 0:
+                                self.find_bounding_rect_coords()
+                                cv2.rectangle(self.frame, self.bounding_rect_top_left,
                                                   self.bounding_rect_bottom_right, (255, 0, 0), 2)
 
-                            coords_x_30 = [0] * (math.ceil(self.width / 30) + 1)
-                            coords_y_30 = [0] * (math.ceil(self.height / 30) + 1)
-                            for x, y in self.coords:
-                                i, j = int(x / 30), int(y / 30)
-                                coords_x_30[i] += 1
-                                coords_y_30[j] += 1
-
-                            ### Center by  keypoints's density
-                            self.center_x = coords_x_30.index(max(coords_x_30)) * 30 + 15		
-                            self.center_y = coords_y_30.index(max(coords_y_30)) * 30 + 15
-
-                             ### Center of bounding box
-
+                            ### Center of bounding box
                             center_x1 = (self.bounding_rect_top_left[0]+self.bounding_rect_bottom_right[0])/2
                             center_y1 = (self.bounding_rect_top_left[1]+self.bounding_rect_bottom_right[1])/2
                             self.center = (center_x1,center_y1)
 
                             ### Distance and angle of bounding box's center
-
-
                             self.angle_of_center = round(self.angle(self.center,self.width,self.height),4)
                             self.distance_of_center = round(self.distance(self.center,(self.width/2, self.height/2)),4)
 
-
-                            #cv2.line(self.frame, (self.center_x - 2, self.center_y),
-                                     #(self.center_x + 2, self.center_y), (255, 0, 0), 2)
-                            #cv2.line(self.frame, (self.center_x, self.center_y - 2),
-                                     #(self.center_x, self.center_y + 2), (255, 0, 0), 2)
-                            #cv2.circle(self.frame, (self.center_x, self.center_y), 5, (255, 0, 0), 2)
                             cv2.circle(self.frame, (int(center_x1), int(center_y1)), 5, (255, 0, 0), 2)
-                            #cv2.putText(self.frame, str(len(self.coords)), (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                                        #color=(200, 50, 75), thickness=3)
                         else:
                             cv2.putText(self.frame, "Object Not Found", (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                         color=(200, 50, 75), thickness=3)
@@ -319,39 +277,44 @@ class MainWindow(QWidget):
                         self.rect_point1[1]:
                     cv2.rectangle(frame_copy, self.rect_point1, self.rect_point2, (255, 0, 0), 2)
                     cv2.imshow('Object Tracking', frame_copy)
-                    self.viewCam(frame_copy)
                 else:
                     cv2.imshow('Object Tracking', self.frame)
-                    self.viewCam(self.frame)
                 
                 
-                self.key = cv2.waitKey(25)
+                self.key = cv2.waitKey(10)
                 if self.ui.Pause.isChecked():
                     self.ui.Pause.toggle()
-                    self.key2 = cv2.waitKey(25)
+                    self.timer_uart.stop()
+                    self.key2 = cv2.waitKey(10)
                     while not (self.ui.Start.isChecked()):
                         if self.ui.Reset.isChecked():
                             self.frame = error_free_frame
-                            self.key = self.key2
+                            if self.ui.Exit.isChecked():
+                                break
                         elif self.ui.Exit.isChecked():
-                            self.key = 13
                             break
+
 
                         if self.click_count == 1 and self.rect_point2[0] > self.rect_point1[0] and self.rect_point2[1] > \
                                 self.rect_point1[1]:
                             frame_copy = self.frame.copy()
                             cv2.rectangle(frame_copy, self.rect_point1, self.rect_point2, (255, 0, 0), 2)
                             cv2.imshow('Object Tracking', frame_copy)
-                            self.viewCam(frame_copy)
+                            
                         else:
                             cv2.imshow('Object Tracking', self.frame)
-                            self.viewCam(self.frame)
-                        self.key2 = cv2.waitKey(25)
+                            
+                        self.key2 = cv2.waitKey(10)
                         continue
+                    self.end()
+
+                        
                 if self.ui.Reset.isChecked():
                     self.ui.Reset.toggle()
                     self.click_count = 0
                     self.tracker_enabled = False
+                    self.distance_of_center = 0
+                    self.angle_of_center = 0
                     self.error = None
                 if self.ui.Exit.isChecked():  
                     break
@@ -359,6 +322,7 @@ class MainWindow(QWidget):
 
     def end(self):
         self.cap.release()
+        ser.close()
         cv2.destroyAllWindows()
 
     def distance(self, point1, point2):
@@ -378,75 +342,42 @@ class MainWindow(QWidget):
 
 
     ########################################## UI ###################################################          
-    def viewCam(self,frame):
-        # convert image to RGB format
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # get image infos
-        height, width, channel = image.shape
-        step = channel * width
-        # create QImage from image
-        qImg = QImage(image.data, width, height, step, QImage.Format_RGB888)
-        # show image in img_label
-        self.ui.label.setPixmap(QPixmap.fromImage(qImg))
-    
-    def checkPort(self):
+    def OpenPort(self):
         ser.port= self.ui.portname.currentText()
         ser.baudrate = self.ui.baudrate.currentText()
-        if self.ui.UartBtn.text() == 'Open':
-            ser.open()  # Opens SerialPort
-            self.ui.UartBtn.setText('Close')
-            self.ui.UartBtn.toggle()
-        else:
-            ser.close()  
-            self.ui.UartBtn.setText('Open')
-            self.ui.UartBtn.toggle()
+        ser.open()
+        print('Open: ' + ser.portstr)
 
+    def ClosePort(self):
+        ser.close()
+        print('Close: ' + ser.portstr)
 
-        # print port open or closed
-        if ser.isOpen():
-            print('Open: ' + ser.portstr)
-            #print(type(ser.baudrate))
-        else:
-            print('Close: ' + ser.portstr)    
-
-    def refreshPort(self):
+    def RefreshPort(self):
         self.ui.portname.clear()
         ports = list(serial.tools.list_ports.comports())  
         for p in ports:
             self.ui.portname.addItem(p[0])  
-
-    def checkBox(self):    
-    	if  self.ui.show_keypoints.isChecked():
-    		self.draw_keypoints_enabled = True
-    	else:
-    		self.draw_keypoints_enabled = False
-    	if  self.ui.show_bounding_rectangle.isChecked():
-    		self.draw_bounding_rect_enabled = True
-    	else:
-    		self.draw_bounding_rect_enabled = False	
 
     def slider(self):
     	self.keypoint_accuracy = self.ui.keypoints_accuracy_slider.value()/100
     	self.bounding_rect_accuracy = self.ui.rectangle_accuracy_slider.value()/100
     	self.object_detection_accuracy = self.ui.object_accuracy_slider.value()/100
 
-    def check_sum(self, my_string):
-        result = 0
-        length = len(my_string)
-        for i in range(length):
-            result ^= ord(my_string[i])
-        my_hex = '{0:X}'.format(result)
-        if result < 16:
-            my_hex = '0' + my_hex
-        return my_hex
-
     def send_data(self):
-    	if ser.isOpen():
-            temp = 'CAM,' + str(self.distance_of_center) + ',' + str(self.angle_of_center)
-            temp = temp + ',' + self.check_sum(temp) + '\r\n'
-            ser.write(str.encode(format(temp)))
-            text = datetime.datetime.now().strftime("%H:%M:%S") + ' ' + temp
+        try:
+            m = ['CAM,', str(self.distance_of_center), ',', str(self.angle_of_center), '\n']
+            me = "".join(m)
+            ser.write(me.encode('utf-8'))
+            text = time.strftime("%H:%M:%S") + ' ' + me
             self.ui.sent_box.append(text)
+        except Exception as e:
+            pass
+
+    def rescale_frame(self, frame, percent=75):
+        width = int(frame.shape[1] * percent / 100)
+        height = int(frame.shape[0] * percent / 100)
+        dim = (width, height)
+        return cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
