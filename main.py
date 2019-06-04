@@ -14,8 +14,8 @@ from ui_main import *
 
 lucas_kanade_params = dict(winSize=(15, 15), maxLevel=2,
                            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-Stream = 'rtsp://admin:adminEXCZCN@192.168.137.49:554/Streaming/Channels/101/'
-
+#Stream = 'rtsp://admin:adminEXCZCN@192.168.137.49:554/Streaming/Channels/101/'
+Stream = 0
 class MainWindow(QWidget):
     interval = 20
     keypoint_accuracy = 0.50
@@ -51,15 +51,11 @@ class MainWindow(QWidget):
     center_x = 0
     center_y = 0
     key, key2 = None, None
-    center = (0, 0)
-    angle_of_center = 0
-    distance_of_center = 0
+    
 
 
     ################################ initialization function #########################################
     def __init__(self):
-        # Take first frame and find points in it
-        #COMPORT = 3  # Enter Your COM Port Number Here.
         global ser
         ser = serial.Serial()
         # configure serial port
@@ -240,16 +236,17 @@ class MainWindow(QWidget):
                                 self.find_bounding_rect_coords()
                                 cv2.rectangle(self.frame, self.bounding_rect_top_left,
                                                   self.bounding_rect_bottom_right, (255, 0, 0), 2)
-
+                            
                             ### Center of bounding box
                             center_x1 = (self.bounding_rect_top_left[0]+self.bounding_rect_bottom_right[0])/2
                             center_y1 = (self.bounding_rect_top_left[1]+self.bounding_rect_bottom_right[1])/2
-                            self.center = (center_x1,center_y1)
-
-                            ### Distance and angle of bounding box's center
-                            self.angle_of_center = round(self.angle(self.center,self.width,self.height),4)
-                            self.distance_of_center = round(self.distance(self.center,(self.width/2, self.height/2)),4)
-
+                            w = self.bounding_rect_bottom_right[0] - self.bounding_rect_top_left[0]
+                            h = self.bounding_rect_bottom_right[1] - self.bounding_rect_top_left[1]
+                            
+                            ### Sent data
+                            self.objX = round(((center_x1 - self.width/2) / (self.width/2)), 3)
+                            self.objY = round(((center_y1 - self.height/2) /(self.height/2)), 3)
+                            self.areaObj = round(((w * h) / (4.0 * ((self.width/2) * (self.height/2)))) * 100, 3)
                             cv2.circle(self.frame, (int(center_x1), int(center_y1)), 5, (255, 0, 0), 2)
                         else:
                             cv2.putText(self.frame, "Object Not Found", (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
@@ -325,20 +322,7 @@ class MainWindow(QWidget):
         ser.close()
         cv2.destroyAllWindows()
 
-    def distance(self, point1, point2):
-        return math.sqrt((point1[0]-point2[0])**2 + (point1[1]-point2[1])**2)
-
-    def angle(self, point,width,height):
-        if point[0]<width/2 and point[1]<height/2: 
-            return math.degrees(math.atan((point[1]-height/2)/(point[0]-width/2)))-180
-        elif point[0]<width/2 and point[1]>height/2:
-            return math.degrees(math.atan((point[1]-height/2)/(point[0]-width/2)))+180
-        elif point[0]==width/2 and point[1]<height/2:
-            return -90
-        elif point[0]==width/2 and point[1]>height/2:
-            return 90   
-        else:
-            return math.degrees(math.atan((point[1]-height/2)/(point[0]-width/2)))       
+          
 
 
     ########################################## UI ###################################################          
@@ -365,7 +349,7 @@ class MainWindow(QWidget):
 
     def send_data(self):
         try:
-            m = ['CAM,', str(self.distance_of_center), ',', str(self.angle_of_center), '\n']
+            m = ['CAMCO,', str(self.objX), ',', str(self.objY), ',', str(self.areaObj), '\n']
             me = "".join(m)
             ser.write(me.encode('utf-8'))
             text = time.strftime("%H:%M:%S") + ' ' + me
@@ -374,9 +358,9 @@ class MainWindow(QWidget):
             pass
 
     def rescale_frame(self, frame, percent=75):
-        width = int(frame.shape[1] * percent / 100)
-        height = int(frame.shape[0] * percent / 100)
-        dim = (width, height)
+        self.width = int(frame.shape[1] * percent / 100)
+        self.height = int(frame.shape[0] * percent / 100)
+        dim = (self.width, self.height)
         return cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
 
 if __name__ == '__main__':
