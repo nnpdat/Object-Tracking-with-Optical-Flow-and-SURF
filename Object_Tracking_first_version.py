@@ -2,23 +2,22 @@ import numpy as np
 import cv2
 import math
 import serial
-from time import sleep
+import sys
 
-# Set parameters for ShiTomasi corner detection
-feature_params = dict(maxCorners=500, qualityLevel=0.3, minDistance=7, blockSize=7)
 # Set parameters for lucas kanade optical flow
 lucas_kanade_params = dict(winSize=(15, 15), maxLevel=2,
                            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-
+#link = ['rtsp://admin:adminEXCZCN@', sys.argv[1], ':554/Streaming/Channels/101/']
+#Stream = "".join(link)
+serialPort = serial.Serial('COM9', 115200, serial.EIGHTBITS, serial.PARITY_NONE, serial.STOPBITS_ONE)
+#Stream = 0
 
 class ObjectTracking(object):
-    draw_keypoints_enabled = True
-    draw_bounding_rect_enabled = False
-    interval = 20
+    interval = 40
     keypoint_accuracy = 0.50
     bounding_rect_accuracy = 0.90
     object_detection_accuracy = 0.80
-    cap = cv2.VideoCapture('rtsp://admin:admin@192.168.1.30:10554/tcp/av0_0')
+    cap = None
     prev_frame = None
     prev_gray = None
     prev_points = []
@@ -45,31 +44,15 @@ class ObjectTracking(object):
     kp2, des2 = None, None
     center_x = 0
     center_y = 0
+    send_count = 0
+    centerX = 0
+    centerY = 0
+    take_size_frame = True
 
     def __init__(self):
-        # Take first frame and find points in it
-        _, self.prev_frame = self.cap.read()
-        self.prev_gray = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
-        self.prev_points = np.asarray(self.prev_points, dtype=np.float32).reshape(-1, 1, 2)
-        self.new_points = np.asarray(self.new_points, dtype=np.float32).reshape(-1, 1, 2)
+        self.cap = cv2.VideoCapture(Stream)
         cv2.namedWindow('Object Tracking')
         cv2.setMouseCallback('Object Tracking', self.select_roi)
-        COMPORT = 3  # Enter Your COM Port Number Here.
-        global ser
-        ser = serial.Serial()
-        ser.baudrate = 9600
-        ser.port = "COM{}".format(COMPORT)  # COM Port Name Start from 0
-
-        # ser.port = '/dev/ttyUSB0' #If Using Linux
-
-        # Specify the TimeOut in seconds, so that SerialPort
-        # Doesn't hangs
-        ser.timeout = 10
-        ser.open()  # Opens SerialPort
-
-        # print port open or closed
-        if ser.isOpen():
-            print('Open: ' + ser.portstr)
 
     def select_roi(self, event, x, y, flags, params):
         if (self.click_count == 1):
@@ -100,7 +83,6 @@ class ObjectTracking(object):
 
         if self.find_selected_image_keypoints:
             self.kp2, self.des2 = surf.detectAndCompute(self.selected_image_gray, None)
-            # print(len(kp1), len(self.kp2))
             if len(self.kp2) < 3:
                 self.error = "No keypoints found, Try again."
                 return
@@ -119,14 +101,12 @@ class ObjectTracking(object):
                 good.append(m)
 
         list_kp1 = []
-        # list_kp2 = []
+       
         for mat in good:
             img1_idx = mat.queryIdx
-            # img2_idx = mat.trainIdx
             (x1, y1) = kp1[img1_idx].pt
-            # (x2,y2) = kp2[img2_idx].pt
             list_kp1.append((x1, y1))
-            # list_kp2.append((x2, y2))
+            
 
         self.prev_points = []
         self.prev_points = np.asarray(self.prev_points, dtype=np.float32).reshape(-1, 2)
@@ -183,109 +163,107 @@ class ObjectTracking(object):
         self.bounding_rect_bottom_right = (int(right), int(bottom))
 
     def start(self):
-
+        _, self.prev_frame = self.cap.read()
+        self.prev_frame = self.rescale_frame(self.prev_frame, 50)
+        self.prev_gray = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
+        self.prev_points = np.asarray(self.prev_points, dtype=np.float32).reshape(-1, 1, 2)
+        self.new_points = np.asarray(self.new_points, dtype=np.float32).reshape(-1, 1, 2)
         while (True):
             ret, self.frame = self.cap.read()
-            self.frame_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
-            if ret:
-                if self.tracker_enabled:  # and self.prev_points is not None:
-                    self.scan_count += 1
-                    self.prev_points = self.prev_points.reshape(-1, 1, 2)
+            self.frame = self.rescale_frame(self.frame, 50)
+            if self.take_size_frame:
+                (H, W) = self.frame.shape[:2]
+                self.centerX = W // 2
+                self.centerY = H // 2
+                self.take_size_frame = False
 
-                    self.new_points, status, errors = cv2.calcOpticalFlowPyrLK(self.prev_gray, self.frame_gray,
+            self.frame_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
+     
+            if self.tracker_enabled:  # and self.prev_points is not None:
+                self.scan_count += 1
+                self.prev_points = self.prev_points.reshape(-1, 1, 2)
+
+                self.new_points, status, errors = cv2.calcOpticalFlowPyrLK(self.prev_gray, self.frame_gray,
                                                                                self.prev_points, None,
                                                                                **lucas_kanade_params)
 
-                    if self.new_points is not None:
-                        temp = self.new_points[status == 1]
-                        self.coords = temp.reshape(-1, 2)
-                        for x, y in self.coords:
-                            if self.draw_keypoints_enabled:
-                                cv2.circle(self.frame, (int(x), int(y)), 3, (0, 255, 0), -1)
+                if self.new_points is not None:
+                    temp = self.new_points[status == 1]
+                    self.coords = temp.reshape(-1, 2)
+                        
 
-                        if len(self.coords) > self.initial_keypoints * (1 - self.object_detection_accuracy):
-                            if self.draw_bounding_rect_enabled:
-                                if len(self.coords) != 0:
-                                    self.find_bounding_rect_coords()
-                                    cv2.rectangle(self.frame, self.bounding_rect_top_left,
+                    if len(self.coords) > self.initial_keypoints * (1 - self.object_detection_accuracy):
+                        if len(self.coords) != 0:
+                            self.find_bounding_rect_coords()
+                            cv2.rectangle(self.frame, self.bounding_rect_top_left,
                                                   self.bounding_rect_bottom_right, (255, 0, 0), 2)
 
-                            coords_x_30 = [0] * (math.ceil(1270 / 30) + 1)
-                            coords_y_30 = [0] * (math.ceil(680/ 30) + 1)
-                            for x, y in self.coords:
-                                i, j = int(x / 30), int(y / 30)
-                                coords_x_30[i] += 1
-                                coords_y_30[j] += 1
-                            self.center_x = coords_x_30.index(max(coords_x_30)) * 30 + 15
-                            self.center_y = coords_y_30.index(max(coords_y_30)) * 30 + 15
+                            center_x1 = (self.bounding_rect_top_left[0]+self.bounding_rect_bottom_right[0])/2
+                            center_y1 = (self.bounding_rect_top_left[1]+self.bounding_rect_bottom_right[1])/2
 
-                            cv2.line(self.frame, (self.center_x - 10, self.center_y), (self.center_x + 10, self.center_y), (255, 0, 0), 2)
-                            cv2.line(self.frame, (self.center_x, self.center_y - 10), (self.center_x, self.center_y + 10), (255, 0, 0), 2)
-                            cv2.circle(self.frame, (self.center_x, self.center_y), 15, (255, 0, 0), 2)
-                            cv2.putText(self.frame, str(len(self.coords)), (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            w = self.bounding_rect_bottom_right[0] - self.bounding_rect_top_left[0]
+                            h = self.bounding_rect_bottom_right[1] - self.bounding_rect_top_left[1]
+
+                            objX = round(((self.bounding_rect_top_left[0] + (w / 2.0) - self.centerX) / self.centerX), 3)
+                            objY = round(((self.bounding_rect_top_left[1] + (h / 2.0) - self.centerY) / self.centerY), 3)
+                            areaObj = round(((w * h) / (4.0 * (self.centerX * self.centerY))) * 100, 3) 
+
+                            if(self.send_count == 1):
+                                mess = ['CAMCO,', str(objX), ',', str(objY), ',', str(areaObj), '\n']
+                                message = "".join(mess)
+                                serialPort.write(message.encode('utf-8'))
+                                self.send_count = 0
+                            self.send_count = self.send_count + 1     
+
+                            cv2.circle(self.frame, (int(center_x1), int(center_y1)), 1, (255, 0, 0), 3)      
+                    else:
+                        cv2.putText(self.frame, "Object Not Found", (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                         color=(200, 50, 75), thickness=3)
-                        else:
-                            cv2.putText(self.frame, "Object Not Found", (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                                        color=(200, 50, 75), thickness=3)
 
-                        self.prev_gray = self.frame_gray.copy()
-                        self.prev_points = self.new_points.reshape(-1, 1, 2)
+                    self.prev_gray = self.frame_gray.copy()
+                    self.prev_points = self.new_points.reshape(-1, 1, 2)
 
-                    cond_1 = self.new_points is None
-                    cond_2 = self.prev_points[status == 1].shape[0] < self.initial_keypoints * self.keypoint_accuracy
-                    cond_3 = self.scan_count % self.interval == 0
-                    if cond_1 or cond_2 or cond_3:
-                        self.find_keypoints()
-                        self.error = None
-                    if self.scan_count == 500:
-                        self.scan_count == 0
+                cond_1 = self.new_points is None
+                cond_2 = self.prev_points[status == 1].shape[0] < self.initial_keypoints * self.keypoint_accuracy
+                cond_3 = self.scan_count % self.interval == 0
+                if cond_1 or cond_2 or cond_3:
+                    self.find_keypoints()
+                    self.error = None
+                if self.scan_count == 500:
+                    self.scan_count == 0
 
-                error_free_frame = self.frame.copy()
-                if self.error is not None:
-                    cv2.putText(self.frame, str(self.error), (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, color=(200, 50, 75),
+            error_free_frame = self.frame.copy()
+            if self.error is not None:
+                cv2.putText(self.frame, str(self.error), (0, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, color=(200, 50, 75),
                                 thickness=3)
 
-                frame_copy = self.frame.copy()
-                if self.click_count == 1 and self.rect_point2[0] > self.rect_point1[0] and self.rect_point2[1] > \
+            frame_copy = self.frame.copy()
+            if self.click_count == 1 and self.rect_point2[0] > self.rect_point1[0] and self.rect_point2[1] > \
                         self.rect_point1[1]:
-                    cv2.rectangle(frame_copy, self.rect_point1, self.rect_point2, (255, 0, 0), 2)
-                    cv2.imshow('Object Tracking', frame_copy)
-                else:
-                    cv2.imshow('Object Tracking', self.frame)
-                ser.write(str.encode(format(self.center_x, '.1f')) + b' ')
-                ser.write(str.encode(format(self.center_y, '.1f')) + b'\n')
+                cv2.rectangle(frame_copy, self.rect_point1, self.rect_point2, (255, 0, 0), 2)
+                cv2.imshow('Object Tracking', frame_copy)
+            else:
+                cv2.imshow('Object Tracking', self.frame)
+               
 
-                key = cv2.waitKey(25)
-                if key == ord('p'):
-                    key2 = cv2.waitKey(25)
-                    while key2 != ord('s'):
-                        if key2 == ord('r'):
-                            self.frame = error_free_frame
-                            key = key2
-                        elif key2 == 13:
-                            key = 13
-                            break
-
-                        if self.click_count == 1 and self.rect_point2[0] > self.rect_point1[0] and self.rect_point2[1] > \
-                                self.rect_point1[1]:
-                            frame_copy = self.frame.copy()
-                            cv2.rectangle(frame_copy, self.rect_point1, self.rect_point2, (255, 0, 0), 2)
-                            cv2.imshow('Object Tracking', frame_copy)
-                        else:
-                            cv2.imshow('Object Tracking', self.frame)
-                        key2 = cv2.waitKey(25)
-                        continue
-                if key == ord('r'):
-                    self.click_count = 0
-                    self.tracker_enabled = False
-                    self.error = None
-                if key == 13:  # 13 is the Enter Key
-                    break
+            key = cv2.waitKey(5)
+            if key == ord('r'):
+                self.click_count = 0
+                self.tracker_enabled = False
+                self.error = None
+            if key == 27:  
+                break
 
     def end(self):
         cv2.destroyAllWindows()
+        serialPort.close()
         self.cap.release()
 
+    def rescale_frame(self, frame, percent=75):
+        width = int(frame.shape[1] * percent / 100)
+        height = int(frame.shape[0] * percent / 100)
+        dim = (width, height)
+        return cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
 
 OT = ObjectTracking()
 OT.start()
